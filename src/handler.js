@@ -1,8 +1,7 @@
 const { nanoid } = require('nanoid');
-const { db } = require('./database');
+const books = require('./books');
 
-async function addBooks(req, h) {
-  const query = 'INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+function addBooks(req, h) {
   const {
     name, year, author, summary, publisher, pageCount, readPage, reading,
   } = req.payload;
@@ -24,30 +23,26 @@ async function addBooks(req, h) {
       message: 'Gagal menambahkan buku. readPage tidak boleh lebih besar dari pageCount',
     }).code(400);
   }
-  try {
-    await db.run(query, [
-      id,
-      name,
-      year,
-      author,
-      summary,
-      publisher,
-      pageCount,
-      readPage,
-      finished,
-      reading,
-      insertedAt,
-      updatedAt,
-    ]);
 
-    const insertedBook = await new Promise((resolve, reject) => {
-      const selectQuery = 'SELECT * FROM books WHERE id = ?';
-      db.get(selectQuery, [id], (err, row) => {
-        if (err) reject(err);
-        resolve(row);
-      });
-    });
-    if (insertedBook) {
+  const newBook = {
+    id,
+    name,
+    year,
+    author,
+    summary,
+    publisher,
+    pageCount,
+    readPage,
+    finished,
+    reading,
+    insertedAt,
+    updatedAt,
+  };
+  try {
+    books.push(newBook);
+    // console.log(newBook);
+    const isSuccess = books.filter((book) => book.id === id).length > 0;
+    if (isSuccess) {
       return h.response({
         status: 'success',
         message: 'Buku berhasil ditambahkan',
@@ -59,10 +54,7 @@ async function addBooks(req, h) {
     return h.response({
       status: 'fail',
       message: 'Buku gagal ditambahkan',
-      data: {
-        bookId: id,
-      },
-    }).code(400);
+    }).code(500);
   } catch (e) {
     return h.response({
       status: 'error',
@@ -71,65 +63,67 @@ async function addBooks(req, h) {
   }
 }
 
-async function getAllBooks(req, h) {
-  const query = 'SELECT * FROM books';
+function getAllBooks(req, h) {
+  const { name, reading, finished } = req.query;
 
-  try {
-    const booksFromDB = await new Promise((resolve, reject) => {
-      db.all(query, (err, rows) => {
-        if (err) reject(err);
-        resolve(rows);
-      });
-    });
+  let filteredBooks = [...books];
 
+  if (name) {
+    const searchTerm = name.toLowerCase();
+    filteredBooks = filteredBooks.filter((b) => b.name.toLowerCase().includes(searchTerm));
+  }
+
+  if (reading !== undefined) {
+    const isReading = parseInt(reading, 10) === 1;
+    filteredBooks = filteredBooks.filter((b) => b.reading === isReading);
+  }
+
+  if (finished !== undefined) {
+    const isFinished = parseInt(finished, 10) === 1;
+    filteredBooks = filteredBooks.filter((b) => b.finished === isFinished);
+  }
+
+  const simplifiedBooks = filteredBooks.map((
+    { id, name: nama, publisher },
+  ) => ({ id, name: nama, publisher }));
+
+  return h.response({
+    status: 'success',
+    data: {
+      books: simplifiedBooks,
+    },
+  }).code(200);
+}
+
+function getBookById(req, h) {
+  const { id } = req.params;
+  const book = books.filter((b) => b.id === id)[0];
+
+  if (book !== undefined) {
     return h.response({
       status: 'success',
       data: {
-        books: booksFromDB,
+        book,
       },
     }).code(200);
-  } catch (error) {
-    return h.response({
-      status: 'error',
-      message: 'Terjadi kesalahan pada server',
-    }).code(500);
   }
+  return h.response({
+    status: 'fail',
+    message: 'Buku tidak ditemukan',
+  }).code(404);
 }
 
-async function getBookById(req, h) {
+function updateBookById(req, h) {
   const { id } = req.params;
-  const query = 'SELECT * FROM books WHERE id = ?';
+  const index = books.findIndex((b) => b.id === id);
 
-  try {
-    const bookFromDB = await new Promise((resolve, reject) => {
-      db.get(query, [id], (err, row) => {
-        if (err) reject(err);
-        resolve(row);
-      });
-    });
-
-    if (bookFromDB !== undefined) {
-      return h.response({
-        status: 'success',
-        data: {
-          book: bookFromDB,
-        },
-      }).code(200);
-    }
+  if (index === -1) {
     return h.response({
       status: 'fail',
-      message: 'Buku tidak ditemukan',
+      message: 'Gagal memperbarui buku. Id tidak ditemukan',
     }).code(404);
-  } catch (error) {
-    return h.response({
-      status: 'error',
-      message: 'Terjadi kesalahan pada server',
-    }).code(500);
   }
-}
 
-async function updateBookById(req, h) {
-  const { id } = req.params;
   const {
     name, year, author, summary, publisher, pageCount, readPage, reading,
   } = req.payload;
@@ -141,90 +135,52 @@ async function updateBookById(req, h) {
     }).code(400);
   }
 
-  const query = `
-    UPDATE books
-    SET
-      name = ?,
-      year = ?,
-      author = ?,
-      summary = ?,
-      publisher = ?,
-      pageCount = ?,
-      readPage = ?,
-      reading = ?,
-      updatedAt = ?
-    WHERE id = ?
-  `;
+  const { pageCount: pgCount } = books[index];
 
-  try {
-    const updatedAt = new Date().toISOString();
-    const { pageCount: pgCount } = await new Promise((resolve, reject) => {
-      const selectQuery = 'SELECT pageCount FROM books WHERE id = ?';
-      db.get(selectQuery, [id], (err, row) => {
-        if (err) reject(err);
-        resolve(row);
-      });
-    });
-
-    if (readPage > pageCount || readPage > pgCount) {
-      return h.response({
-        status: 'fail',
-        message: 'Gagal memperbarui buku. readPage tidak boleh lebih besar dari pageCount',
-      }).code(400);
-    }
-
-    await new Promise((resolve, reject) => {
-      db.run(query, [
-        name,
-        year,
-        author,
-        summary,
-        publisher,
-        pageCount,
-        readPage,
-        reading,
-        updatedAt,
-        id,
-      ], (err) => {
-        if (err) reject(err);
-        resolve();
-      });
-    });
-
+  if (readPage > pageCount || readPage > pgCount) {
     return h.response({
-      status: 'success',
-      message: 'Buku berhasil diperbarui',
-    }).code(200);
-  } catch (error) {
-    return h.response({
-      status: 'error',
-      message: 'Terjadi kesalahan pada server',
-    }).code(500);
+      status: 'fail',
+      message: 'Gagal memperbarui buku. readPage tidak boleh lebih besar dari pageCount',
+    }).code(400);
   }
+
+  const updatedAt = new Date().toISOString();
+
+  books[index] = {
+    ...books[index],
+    name,
+    year,
+    author,
+    summary,
+    publisher,
+    pageCount,
+    readPage,
+    reading,
+    updatedAt,
+  };
+
+  return h.response({
+    status: 'success',
+    message: 'Buku berhasil diperbarui',
+  }).code(200);
 }
 
-async function deleteBookById(req, h) {
+function deleteBookById(req, h) {
   const { id } = req.params;
-  const query = 'DELETE FROM books WHERE id = ?';
+  const index = books.findIndex((b) => b.id === id);
 
-  try {
-    await new Promise((resolve, reject) => {
-      db.run(query, [id], (err) => {
-        if (err) reject(err);
-        resolve();
-      });
-    });
-
+  if (index !== -1) {
+    books.splice(index, 1);
     return h.response({
       status: 'success',
       message: 'Buku berhasil dihapus',
     }).code(200);
-  } catch (error) {
-    return h.response({
-      status: 'error',
-      message: 'Terjadi kesalahan pada server',
-    }).code(500);
   }
+
+  return h.response({
+    status: 'fail',
+    message: 'Buku gagal dihapus. Id tidak ditemukan',
+  }).code(404);
 }
 
 module.exports = {
